@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: PancakeTAS <pancake@mgnet.work>
+Date: Wed, 17 May 2023 21:13:58 +0200
+Subject: [PATCH] Implement Tickrate Changer
+
+
+diff --git a/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java b/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
+index 8d442c5a498ecf288a0cc0c54889c6e2fda849ce..69f88d8a62a16874a687eaea0444fd32994edc81 100644
+--- a/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
++++ b/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
+@@ -283,7 +283,7 @@ public class GlobalConfiguration extends ConfigurationPart {
+         public int regionFileCacheSize = 256;
+         @Comment("See https://luckformula.emc.gs")
+         public boolean useAlternativeLuckFormula = false;
+-        public boolean lagCompensateBlockBreaking = true;
++        public boolean lagCompensateBlockBreaking = false;
+         public boolean useDimensionTypeForCustomSpawners = false;
+         public boolean strictAdvancementDimensionCheck = false;
+     }
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 9f15d9dbdfa74a0640b1a2b4ff695609d4758a4c..5418a6619bccce135ea36fbbfa49671be681e8f4 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -202,7 +202,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     public static final String VANILLA_BRAND = "vanilla";
+     private static final float AVERAGE_TICK_TIME_SMOOTHING = 0.8F;
+     private static final int TICK_STATS_SPAN = 100;
+-    public static final int MS_PER_TICK = 50;
++    public static int MS_PER_TICK = 50;
++    public static float GAMESPEED = 1.0f;
+     private static final int OVERLOADED_THRESHOLD = 2000;
+     private static final int OVERLOADED_WARNING_INTERVAL = 15000;
+     private static final long STATUS_EXPIRE_TIME_NS = 5000000000L;
+@@ -1136,11 +1137,11 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                 long i = ((curTime = System.nanoTime()) / (1000L * 1000L)) - this.nextTickTime; // Paper
+ 
+                 if (i > 5000L && this.nextTickTime - this.lastOverloadWarning >= 30000L) { // CraftBukkit
+-                    long j = i / 50L;
++                    long j = i / MS_PER_TICK;
+ 
+                     if (this.server.getWarnOnOverload()) // CraftBukkit
+                     MinecraftServer.LOGGER.warn("Can't keep up! Is the server overloaded? Running {}ms or {} ticks behind", i, j);
+-                    this.nextTickTime += j * 50L;
++                    this.nextTickTime += j * MS_PER_TICK;
+                     this.lastOverloadWarning = this.nextTickTime;
+                 }
+ 
+@@ -1168,13 +1169,13 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+                 //MinecraftServer.currentTick = (int) (System.currentTimeMillis() / 50); // CraftBukkit // Paper - don't overwrite current tick time
+                 lastTick = curTime;
+-                this.nextTickTime += 50L;
++                this.nextTickTime += MS_PER_TICK;
+                 this.startMetricsRecordingTick();
+                 this.profiler.push("tick");
+                 this.tickServer(this::haveTime);
+                 this.profiler.popPush("nextTickWait");
+                 this.mayHaveDelayedTasks = true;
+-                this.delayedTasksMaxNextTickTime = Math.max(Util.getMillis() + 50L, this.nextTickTime);
++                this.delayedTasksMaxNextTickTime = Math.max(Util.getMillis() + MS_PER_TICK, this.nextTickTime);
+                 this.waitUntilNextTick();
+                 this.profiler.pop();
+                 this.endMetricsRecordingTick();
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index 95a27d28f73039693ca64601954af62028413634..43a181743ceabda18d5974cd25276799662d9383 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -3706,11 +3706,6 @@ public abstract class LivingEntity extends Entity implements Attackable {
+         return ((Byte) this.entityData.get(LivingEntity.DATA_LIVING_ENTITY_FLAGS) & 2) > 0 ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+     }
+ 
+-    // Paper start - lag compensate eating
+-    protected long eatStartTime;
+-    protected int totalEatTimeTicks;
+-    // Paper end
+-
+     private void updatingUsingItem() {
+         if (this.isUsingItem()) {
+             if (ItemStack.isSame(this.getItemInHand(this.getUsedItemHand()), this.useItem)) {
+@@ -3728,12 +3723,7 @@ public abstract class LivingEntity extends Entity implements Attackable {
+         if (this.shouldTriggerItemUseEffects()) {
+             this.triggerItemUseEffects(stack, 5);
+         }
+-        // Paper start - lag compensate eating
+-        // we add 1 to the expected time to avoid lag compensating when we should not
+-        boolean shouldLagCompensate = this.useItem.getItem().isEdible() && this.eatStartTime != -1 && (System.nanoTime() - this.eatStartTime) > ((1 + this.totalEatTimeTicks) * 50 * (1000 * 1000));
+-        if ((--this.useItemRemaining == 0 || shouldLagCompensate) && !this.level.isClientSide && !this.useItem.useOnRelease()) {
+-            this.useItemRemaining = 0;
+-            // Paper end
++        if (--this.useItemRemaining == 0 && !this.level.isClientSide && !this.useItem.useOnRelease()) {
+             this.completeUsingItem();
+         }
+ 
+@@ -3781,10 +3771,7 @@ public abstract class LivingEntity extends Entity implements Attackable {
+ 
+         if (!itemstack.isEmpty() && !this.isUsingItem() || forceUpdate) { // Paper use override flag
+             this.useItem = itemstack;
+-            // Paper start - lag compensate eating
+-            this.useItemRemaining = this.totalEatTimeTicks = itemstack.getUseDuration();
+-            this.eatStartTime = System.nanoTime();
+-            // Paper end
++            this.useItemRemaining = temstack.getUseDuration();
+             if (!this.level.isClientSide) {
+                 this.setLivingEntityFlag(1, true);
+                 this.setLivingEntityFlag(2, hand == InteractionHand.OFF_HAND);
+@@ -3809,10 +3796,7 @@ public abstract class LivingEntity extends Entity implements Attackable {
+                 }
+             } else if (!this.isUsingItem() && !this.useItem.isEmpty()) {
+                 this.useItem = ItemStack.EMPTY;
+-                // Paper start - lag compensate eating
+-                this.useItemRemaining = this.totalEatTimeTicks = 0;
+-                this.eatStartTime = -1L;
+-                // Paper end
++                this.useItemRemaining = 0;
+             }
+         }
+ 
+@@ -3948,10 +3932,7 @@ public abstract class LivingEntity extends Entity implements Attackable {
+         }
+ 
+         this.useItem = ItemStack.EMPTY;
+-        // Paper start - lag compensate eating
+-        this.useItemRemaining = this.totalEatTimeTicks = 0;
+-        this.eatStartTime = -1L;
+-        // Paper end
++        this.useItemRemaining = 0;
+     }
+ 
+     public boolean isBlocking() {

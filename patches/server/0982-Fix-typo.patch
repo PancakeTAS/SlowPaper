@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: PancakeTAS <pancake@mgnet.work>
+Date: Wed, 17 May 2023 21:20:31 +0200
+Subject: [PATCH] Fix typo
+
+
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index 43a181743ceabda18d5974cd25276799662d9383..4edd71b9183aafed80c9ebe9d9a7828b82059ef8 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -3771,7 +3771,7 @@ public abstract class LivingEntity extends Entity implements Attackable {
+ 
+         if (!itemstack.isEmpty() && !this.isUsingItem() || forceUpdate) { // Paper use override flag
+             this.useItem = itemstack;
+-            this.useItemRemaining = temstack.getUseDuration();
++            this.useItemRemaining = itemstack.getUseDuration();
+             if (!this.level.isClientSide) {
+                 this.setLivingEntityFlag(1, true);
+                 this.setLivingEntityFlag(2, hand == InteractionHand.OFF_HAND);
